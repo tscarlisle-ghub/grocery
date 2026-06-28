@@ -46,6 +46,26 @@ function loadList() {
   } catch { return null }
 }
 
+// ── Archive (saved lists) ───────────────────────────────────────────────────────
+const ARCHIVE_KEY = 'publix-saved-lists-v1'
+function loadArchive() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(ARCHIVE_KEY))
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+function saveArchive(lists) {
+  try { localStorage.setItem(ARCHIVE_KEY, JSON.stringify(lists)) }
+  catch (e) { console.warn('Archive save failed', e) }
+}
+function formatDate(ts) {
+  try {
+    return new Date(ts).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    })
+  } catch { return '' }
+}
+
 // ── Debounce ──────────────────────────────────────────────────────────────────
 function useDebounce(val, delay) {
   const [d, setD] = useState(val)
@@ -76,6 +96,9 @@ export default function App() {
   const [importLoading, setImportLoading] = useState(false)
   const [loaded, setLoaded]         = useState(false)
   const [saveStatus, setSaveStatus] = useState('')
+  const [savedLists, setSavedLists] = useState([])
+  const [listsOpen, setListsOpen]   = useState(false)
+  const [snapMsg, setSnapMsg]       = useState('')
 
   const inputRef    = useRef(null)
   const suggBoxRef  = useRef(null)
@@ -86,6 +109,7 @@ export default function App() {
   useEffect(() => {
     const data = loadList()
     if (data) { setItems(data.items); setChecked(data.checked) }
+    setSavedLists(loadArchive())
     setLoaded(true)
   }, [])
 
@@ -159,6 +183,31 @@ export default function App() {
   const clearChecked   = () => { setItems(p => p.filter(i => !checked.has(i.id))); setChecked(new Set()) }
   const clearAll       = () => { if (window.confirm('Clear entire list?')) { setItems([]); setChecked(new Set()) } }
 
+  // ── Saved-list (archive) actions ──────────────────────────────────────────────
+  const saveSnapshot = () => {
+    if (items.length === 0) return
+    const snap = { id: Date.now() + Math.random(), createdAt: Date.now(), items: items.map(i => ({ ...i })), checked: [...checked] }
+    const next = [snap, ...savedLists]
+    setSavedLists(next); saveArchive(next)
+    setSnapMsg('saved'); setTimeout(() => setSnapMsg(''), 2400)
+  }
+  const newList = () => {
+    if (items.length > 0 && !window.confirm('Start a new list? This clears the current items.\n\nTip: tap Save first to keep them in your archive.')) return
+    setItems([]); setChecked(new Set()); setEditId(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  const loadSnapshot = snap => {
+    if (items.length > 0 && !window.confirm('Replace your current list with this saved one?\n\nYour current items aren’t kept unless you saved them.')) return
+    setItems((snap.items ?? []).map(i => ({ ...i })))
+    setChecked(new Set(snap.checked ?? []))
+    setListsOpen(false); setEditId(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  const deleteSnapshot = id => {
+    const next = savedLists.filter(s => s.id !== id)
+    setSavedLists(next); saveArchive(next)
+  }
+
   const total = items.length, done = checked.size
   const grouped = {}
   for (const item of items) { if (!grouped[item.dept]) grouped[item.dept] = []; grouped[item.dept].push(item) }
@@ -173,7 +222,7 @@ export default function App() {
     <div style={{ background: T.paper, minHeight:'100vh', paddingBottom:80 }}>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <header style={{ borderBottom:`1.5px solid ${T.ink}`, padding:'20px 24px 16px', position:'sticky', top:0, background: T.paper, zIndex:50 }}>
+      <header style={{ borderBottom:`1.5px solid ${T.ink}`, padding:'20px 24px 14px', position:'sticky', top:0, background: T.paper, zIndex:50 }}>
         <div style={{ maxWidth:600, margin:'0 auto' }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end' }}>
             <div>
@@ -189,12 +238,13 @@ export default function App() {
                     {done} of {total} · {total - done} remaining
                   </span>
                 )}
-                {saveStatus === 'saving' && <span style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', color: T.ghost }}>SAVING</span>}
-                {saveStatus === 'saved'  && <span style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', color: T.green }}>SAVED</span>}
+                {snapMsg === 'saved'     && <span style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', color: T.green }}>SAVED TO ARCHIVE</span>}
+                {!snapMsg && saveStatus === 'saving' && <span style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', color: T.ghost }}>SAVING</span>}
+                {!snapMsg && saveStatus === 'saved'  && <span style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', color: T.green }}>SAVED</span>}
               </div>
             </div>
             <button onClick={() => setImportOpen(true)}
-              style={{ fontFamily: T.sans, fontSize:12, letterSpacing:'0.14em', textTransform:'uppercase', background:'none', border:`1px solid ${T.ink}`, color: T.ink, padding:'6px 14px', cursor:'pointer' }}>
+              style={{ fontFamily: T.sans, fontSize:12, letterSpacing:'0.14em', textTransform:'uppercase', background:'none', border:`1px solid ${T.ink}`, color: T.ink, padding:'6px 14px', cursor:'pointer', flexShrink:0 }}>
               Import
             </button>
           </div>
@@ -205,6 +255,22 @@ export default function App() {
               <div style={{ position:'absolute', top:0, left:0, height:'100%', width:`${(done/total)*100}%`, background: T.green, transition:'width 0.4s ease' }} />
             </div>
           )}
+
+          {/* List toolbar: New / Save / Archive */}
+          <div style={{ display:'flex', gap:8, marginTop:14, flexWrap:'wrap' }}>
+            <button onClick={newList} disabled={total === 0}
+              style={{ fontFamily: T.sans, fontSize:11, letterSpacing:'0.13em', textTransform:'uppercase', background:'none', border:`1px solid ${total === 0 ? T.rule : T.ink}`, color: total === 0 ? T.ghost : T.ink, padding:'6px 13px', cursor: total === 0 ? 'default' : 'pointer' }}>
+              + New List
+            </button>
+            <button onClick={saveSnapshot} disabled={total === 0}
+              style={{ fontFamily: T.sans, fontSize:11, letterSpacing:'0.13em', textTransform:'uppercase', background: total === 0 ? 'none' : T.green, border:`1px solid ${total === 0 ? T.rule : T.green}`, color: total === 0 ? T.ghost : '#fff', padding:'6px 16px', cursor: total === 0 ? 'default' : 'pointer' }}>
+              Save
+            </button>
+            <button onClick={() => setListsOpen(true)}
+              style={{ fontFamily: T.sans, fontSize:11, letterSpacing:'0.13em', textTransform:'uppercase', background:'none', border:`1px solid ${T.ink}`, color: T.ink, padding:'6px 13px', cursor:'pointer' }}>
+              Archive{savedLists.length > 0 ? ` · ${savedLists.length}` : ''}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -299,6 +365,62 @@ export default function App() {
         </div>
       )}
 
+      {/* ── Archive modal (saved lists) ────────────────────────────────────── */}
+      {listsOpen && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(26,26,24,0.6)', zIndex:200, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}
+          onClick={e => e.target === e.currentTarget && setListsOpen(false)}>
+          <div style={{ background: T.paper, border:`1px solid ${T.rule}`, padding:28, width:'100%', maxWidth:500, maxHeight:'90vh', overflowY:'auto', boxShadow:'0 8px 48px rgba(0,0,0,0.18)' }}>
+
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:20, borderBottom:`1px solid ${T.rule}`, paddingBottom:14 }}>
+              <span style={{ fontFamily: T.titling, fontSize:18, letterSpacing:'0.08em', textTransform:'uppercase', color: T.ink }}>
+                List Archive
+              </span>
+              <button onClick={() => setListsOpen(false)} style={{ background:'none', border:'none', fontFamily: T.sans, fontSize:18, cursor:'pointer', color: T.ghost, lineHeight:1 }}>×</button>
+            </div>
+
+            {savedLists.length === 0 ? (
+              <div style={{ fontFamily: T.serifAlt, fontSize:14, color: T.muted, padding:'24px 4px', textAlign:'center', fontStyle:'italic', lineHeight:1.6 }}>
+                No saved lists yet.<br/>
+                Build a list, then tap <span style={{ fontStyle:'normal', fontFamily:T.sans, fontSize:11, letterSpacing:'0.1em' }}>SAVE</span> to keep a dated copy here.
+              </div>
+            ) : (
+              <div style={{ border:`1px solid ${T.rule}` }}>
+                {savedLists.map((snap, i) => {
+                  const names = (snap.items ?? []).map(it => it.name)
+                  const preview = names.slice(0, 4).join(', ') + (names.length > 4 ? `, +${names.length - 4} more` : '')
+                  return (
+                    <div key={snap.id}
+                      style={{ padding:'14px 16px', borderBottom: i<savedLists.length-1 ? `1px solid ${T.ruleFine}` : 'none' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:12 }}>
+                        <span style={{ fontFamily: T.titling, fontSize:15, letterSpacing:'0.04em', color: T.ink }}>
+                          {formatDate(snap.createdAt)}
+                        </span>
+                        <span style={{ fontFamily: T.accent, fontSize:11, letterSpacing:'0.08em', color: T.green, flexShrink:0 }}>
+                          {names.length} item{names.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <div style={{ fontFamily: T.serifAlt, fontSize:13, color: T.muted, fontStyle:'italic', marginTop:4, lineHeight:1.5 }}>
+                        {preview || '—'}
+                      </div>
+                      <div style={{ display:'flex', gap:12, marginTop:10 }}>
+                        <button onClick={() => loadSnapshot(snap)}
+                          style={{ fontFamily: T.sans, fontSize:11, letterSpacing:'0.12em', textTransform:'uppercase', background: T.green, color:'#fff', border:'none', padding:'6px 16px', cursor:'pointer' }}>
+                          Load
+                        </button>
+                        <button onClick={() => { if (window.confirm('Delete this saved list?')) deleteSnapshot(snap.id) }}
+                          style={{ fontFamily: T.sans, fontSize:11, letterSpacing:'0.12em', textTransform:'uppercase', background:'none', border:`1px solid ${T.rule}`, color: T.muted, padding:'6px 14px', cursor:'pointer' }}>
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Main ───────────────────────────────────────────────────────────── */}
       <main style={{ maxWidth:600, margin:'0 auto', padding:'0 24px' }}>
 
@@ -374,18 +496,10 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <div style={{ display:'flex', gap:16 }}>
-              {done > 0 && (
-                <button onClick={clearChecked}
-                  style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', textTransform:'uppercase', background:'none', border:'none', color: T.muted, cursor:'pointer', textDecoration:'underline', textUnderlineOffset:3 }}>
-                  Remove {done} checked
-                </button>
-              )}
-              <button onClick={clearAll}
-                style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', textTransform:'uppercase', background:'none', border:'none', color:'#c0392b', cursor:'pointer', textDecoration:'underline', textUnderlineOffset:3 }}>
-                Clear all
-              </button>
-            </div>
+            <button onClick={clearAll}
+              style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', textTransform:'uppercase', background:'none', border:'none', color:'#c0392b', cursor:'pointer', textDecoration:'underline', textUnderlineOffset:3 }}>
+              Clear all
+            </button>
           </div>
         )}
 
@@ -401,31 +515,32 @@ export default function App() {
           </div>
         )}
 
-        {/* ── By aisle — Publix walk order ─────────────────────────────────── */}
+        {/* ── By aisle — Publix walk order (remaining only) ────────────────── */}
         {view === 'aisle' && DEPT_ORDER.map(deptId => {
           const deptItems = grouped[deptId]
           if (!deptItems?.length) return null
+          const remaining = deptItems.filter(i => !checked.has(i.id))
+          if (remaining.length === 0) return null
           const dept = getDept(deptId)
-          const allDone = deptItems.every(i => checked.has(i.id))
           return (
             <section key={deptId} style={{ marginTop:28 }}>
               {/* Department header */}
               <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:0 }}>
-                <span style={{ fontFamily: T.sans, fontSize:12, fontWeight:600, letterSpacing:'0.18em', textTransform:'uppercase', color: allDone ? T.ghost : T.green }}>
+                <span style={{ fontFamily: T.sans, fontSize:12, fontWeight:600, letterSpacing:'0.18em', textTransform:'uppercase', color: T.green }}>
                   {dept.label}
                 </span>
                 <span style={{ fontFamily: T.serifAlt, fontSize:11, color: T.ghost, fontStyle:'italic', flex:1 }}>
                   {dept.sub}
                 </span>
                 <span style={{ fontFamily: T.accent, fontSize:10, letterSpacing:'0.08em', color: T.ghost }}>
-                  {deptItems.length}
+                  {remaining.length}
                 </span>
               </div>
               {/* Hairline rule */}
-              <div style={{ height:1, background: allDone ? T.ruleFine : T.green, marginBottom:2, marginTop:4, opacity: allDone ? 1 : 0.7 }} />
+              <div style={{ height:1, background: T.green, marginBottom:2, marginTop:4, opacity:0.7 }} />
 
-              {deptItems.map(item => (
-                <Row key={item.id} item={item} checked={checked.has(item.id)}
+              {remaining.map(item => (
+                <Row key={item.id} item={item} checked={false}
                   onCheck={toggleCheck} onDelete={deleteItem}
                   editId={editId} editText={editText}
                   setEditId={setEditId} setEditText={setEditText}
@@ -435,18 +550,49 @@ export default function App() {
           )
         })}
 
-        {/* ── As added ─────────────────────────────────────────────────────── */}
-        {view === 'added' && (
-          <div style={{ marginTop:20 }}>
-            <div style={{ height:1, background: T.rule, marginBottom:2 }} />
-            {[...items].sort((a,b)=>a.addedAt-b.addedAt).map(item => (
-              <Row key={item.id} item={item} checked={checked.has(item.id)}
+        {/* ── As added (remaining only) ────────────────────────────────────── */}
+        {view === 'added' && (() => {
+          const remaining = [...items].filter(i => !checked.has(i.id)).sort((a,b)=>a.addedAt-b.addedAt)
+          return (
+            <div style={{ marginTop:20 }}>
+              <div style={{ height:1, background: T.rule, marginBottom:2 }} />
+              {remaining.length === 0
+                ? <div style={{ fontFamily: T.serifAlt, fontSize:13, color: T.ghost, fontStyle:'italic', padding:'14px 0' }}>Nothing remaining — see Completed below.</div>
+                : remaining.map(item => (
+                    <Row key={item.id} item={item} checked={false}
+                      onCheck={toggleCheck} onDelete={deleteItem}
+                      editId={editId} editText={editText}
+                      setEditId={setEditId} setEditText={setEditText}
+                      onSaveEdit={saveEdit} />
+                  ))}
+            </div>
+          )
+        })()}
+
+        {/* ── Completed section ────────────────────────────────────────────── */}
+        {done > 0 && (
+          <section style={{ marginTop:36 }}>
+            <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
+              <span style={{ fontFamily: T.sans, fontSize:12, fontWeight:600, letterSpacing:'0.18em', textTransform:'uppercase', color: T.ghost }}>
+                Completed
+              </span>
+              <span style={{ fontFamily: T.serifAlt, fontSize:11, color: T.ghost, fontStyle:'italic', flex:1 }}>
+                Tap the box to move an item back
+              </span>
+              <button onClick={clearChecked}
+                style={{ fontFamily: T.sans, fontSize:10, letterSpacing:'0.1em', textTransform:'uppercase', background:'none', border:'none', color: T.muted, cursor:'pointer', textDecoration:'underline', textUnderlineOffset:3 }}>
+                Clear {done}
+              </button>
+            </div>
+            <div style={{ height:1, background: T.ruleFine, marginBottom:2, marginTop:4 }} />
+            {[...items].filter(i => checked.has(i.id)).sort((a,b)=>a.addedAt-b.addedAt).map(item => (
+              <Row key={item.id} item={item} checked={true}
                 onCheck={toggleCheck} onDelete={deleteItem}
                 editId={editId} editText={editText}
                 setEditId={setEditId} setEditText={setEditText}
                 onSaveEdit={saveEdit} />
             ))}
-          </div>
+          </section>
         )}
 
         {/* All done message */}
