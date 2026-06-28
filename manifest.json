@@ -1,0 +1,13 @@
+{
+  "name": "Publix Shopping List",
+  "short_name": "Publix List",
+  "description": "Grocery list organized by Publix aisle order",
+  "start_url": "/grocery/",
+  "display": "standalone",
+  "background_color": "#faf9f6",
+  "theme_color": "#007749",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
